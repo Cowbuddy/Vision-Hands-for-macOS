@@ -1,0 +1,16 @@
+# Hand Tracking System - UV Optimized Requirements
+# Install with: uv pip install -r requirements-uv.txt
+
+# Core dependencies
+mediapipe==0.10.21
+opencv-python==4.11.0.86
+numpy==1.26.4
+
+# macOS native support (much faster than pyautogui)
+pyobjc-framework-Quartz>=10.0
+
+# Optional: Advanced cursor control
+pyautogui>=0.9.54
+
+# Performance optimization
+protobuf==4.25.7

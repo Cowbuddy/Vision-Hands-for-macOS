@@ -23,11 +23,11 @@ def angle_between_vectors(v1, v2):
 
 def is_finger_extended(landmarks, tip_idx, pip_idx, mcp_idx):
     """Improved finger extension detection using multiple methods"""
-    # Method 1: Angle analysis (original)
+    # Method 1: Angle analysis (more lenient)
     tip_pip_vec = vec(landmarks[tip_idx], landmarks[pip_idx])
     pip_mcp_vec = vec(landmarks[mcp_idx], landmarks[pip_idx])
     angle = angle_between_vectors(tip_pip_vec, pip_mcp_vec)
-    angle_extended = angle < 40  # Slightly more lenient
+    angle_extended = angle < 50  # More lenient angle threshold
     
     # Method 2: Distance analysis - tip should be farther from wrist than PIP
     wrist = landmarks[HandLandmarks.WRIST]
@@ -36,14 +36,14 @@ def is_finger_extended(landmarks, tip_idx, pip_idx, mcp_idx):
     
     tip_wrist_dist = math.sqrt((tip.x - wrist.x)**2 + (tip.y - wrist.y)**2)
     pip_wrist_dist = math.sqrt((pip.x - wrist.x)**2 + (pip.y - wrist.y)**2)
-    distance_extended = tip_wrist_dist > pip_wrist_dist * 1.1
+    distance_extended = tip_wrist_dist > pip_wrist_dist * 1.05  # More lenient ratio
     
     # Method 3: Y-coordinate analysis (tip should be higher/lower than PIP depending on hand orientation)
-    y_extended = abs(tip.y - pip.y) > 0.02  # Some vertical separation
+    y_extended = abs(tip.y - pip.y) > 0.015  # Slightly reduced threshold
     
-    # Combine methods - finger is extended if 2 out of 3 methods agree
+    # Combine methods - finger is extended if 2 out of 3 methods agree (OR just angle method for better detection)
     votes = [angle_extended, distance_extended, y_extended]
-    return sum(votes) >= 2
+    return angle_extended or sum(votes) >= 2  # Allow angle alone or 2/3 consensus
 
 
 def is_thumb_extended(landmarks):
@@ -87,9 +87,10 @@ class HandAnalyzer:
         """Analyze a single hand and return comprehensive information"""
         landmarks = hand_landmarks
         
-        # Fix left/right hand classification - MediaPipe gives mirrored results
+        # MediaPipe hand classification for front camera - need to flip for natural interaction
         original_hand_type = handedness[0].category_name
-        # Flip the hand classification to correct the mirroring
+        # For front-facing camera, MediaPipe correctly identifies hands from user's perspective
+        # But for natural cursor control, we may want to flip
         hand_type = "Right" if original_hand_type == "Left" else "Left"
         confidence = handedness[0].score
         

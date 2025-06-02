@@ -9,7 +9,6 @@ import os
 import cv2
 import time
 import numpy as np
-import threading
 from typing import Optional, List, Dict, Any
 
 # Import MediaPipe
@@ -83,10 +82,6 @@ class BlazingHandTracker:
         self.frame_count = 0
         self.last_hands_info = []
         self.performance_mode = "BALANCED"  # SPEED, BALANCED, QUALITY
-        
-        # Threading for non-critical operations
-        self.ui_thread = None
-        self.ui_queue = []
         
         print("✅ BLAZING FAST hand tracking system initialized!")
         print("🎮 VIM-LIKE CONTROLS:")

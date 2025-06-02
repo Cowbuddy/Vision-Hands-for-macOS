@@ -159,6 +159,42 @@ class SystemController:
             print(f"❌ Failed to scroll: {e}")
             return False
     
+    def mouse_down(self) -> bool:
+        """Press and hold mouse button for drag operations"""
+        try:
+            pyautogui.mouseDown()
+            return True
+        except Exception as e:
+            print(f"❌ Failed to mouse down: {e}")
+            return False
+    
+    def mouse_up(self) -> bool:
+        """Release mouse button to end drag operations"""
+        try:
+            pyautogui.mouseUp()
+            return True
+        except Exception as e:
+            print(f"❌ Failed to mouse up: {e}")
+            return False
+    
+    def move_cursor_while_dragging(self, x: float, y: float) -> bool:
+        """Move cursor while maintaining drag state"""
+        try:
+            pyautogui.dragTo(x, y, duration=0.01, button='left')
+            return True
+        except Exception as e:
+            print(f"❌ Failed to drag cursor: {e}")
+            return False
+    
+    def right_click(self) -> bool:
+        """Perform right mouse click"""
+        try:
+            pyautogui.rightClick()
+            return True
+        except Exception as e:
+            print(f"❌ Failed to right click: {e}")
+            return False
+
     def _log_action(self, action: str):
         """Log action for performance tracking"""
         self.action_history.append({

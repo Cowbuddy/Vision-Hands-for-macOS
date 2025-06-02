@@ -13,26 +13,37 @@ class CursorController:
     def __init__(self, system_controller: SystemController):
         self.system = system_controller
         
-        # Hand preference for cursor control
-        self.preferred_hand = "Left"  # Changed to left hand to avoid interference
+        # Hand preference for cursor control (right hand is more natural for most users)
+        self.preferred_hand = "Right"  # Right hand default for natural mouse replacement
         self.active_hand = None  # Track which hand is currently controlling cursor
+        
+        # Sensitivity controls - Apple Vision Pro style
+        self.cursor_sensitivity = 1.5  # Base sensitivity multiplier
+        self.precision_sensitivity = 0.3  # Precision mode sensitivity
+        self.scroll_sensitivity = 2.0  # Scroll gesture sensitivity
+        self.click_hold_threshold = 0.8  # Time in seconds for click and hold
+        self.precision_mode = False  # Precision mode toggle
         
         # Cursor control state (per hand)
         self.cursor_enabled = False
+        self.is_dragging = False  # Track drag state for click and hold
+        self.drag_start_pos = None  # Starting position for drag operations
         self.hand_states = {
             "Left": {
                 "last_pinch_state": False,
                 "pinch_start_time": 0,
                 "pinch_release_time": 0,
                 "waiting_for_release": False,
-                "last_pinch_release_time": 0
+                "last_pinch_release_time": 0,
+                "is_holding": False  # Track click and hold state
             },
             "Right": {
                 "last_pinch_state": False,
                 "pinch_start_time": 0,
                 "pinch_release_time": 0,
                 "waiting_for_release": False,
-                "last_pinch_release_time": 0
+                "last_pinch_release_time": 0,
+                "is_holding": False  # Track click and hold state
             }
         }
         
@@ -52,7 +63,7 @@ class CursorController:
         self.last_cursor_pos: Optional[Tuple[float, float]] = None
         
     def handle_cursor_control(self, hand_info: HandInfo, frame_width: int, frame_height: int):
-        """Enhanced cursor control with improved pinch logic - prioritizes left hand"""
+        """Enhanced cursor control with improved pinch logic - prioritizes right hand"""
         # Only handle cursor control for the preferred hand or active hand
         if hand_info.hand_type != self.preferred_hand and hand_info.hand_type != self.active_hand:
             return
@@ -138,27 +149,88 @@ class CursorController:
         else:
             print(f"❌ Invalid hand type: {hand_type}. Use 'Left' or 'Right'.")
     
+    def set_sensitivity(self, sensitivity_type: str, value: float):
+        """Set sensitivity for different cursor operations"""
+        if sensitivity_type == "cursor":
+            self.cursor_sensitivity = max(0.1, min(5.0, value))
+            print(f"🎯 Cursor sensitivity set to {self.cursor_sensitivity:.1f}")
+        elif sensitivity_type == "precision":
+            self.precision_sensitivity = max(0.05, min(1.0, value))
+            print(f"🎯 Precision sensitivity set to {self.precision_sensitivity:.1f}")
+        elif sensitivity_type == "scroll":
+            self.scroll_sensitivity = max(0.1, min(10.0, value))
+            print(f"🎯 Scroll sensitivity set to {self.scroll_sensitivity:.1f}")
+        else:
+            print(f"❌ Invalid sensitivity type: {sensitivity_type}")
+    
+    def toggle_precision_mode(self):
+        """Toggle precision mode for fine cursor control"""
+        self.precision_mode = not self.precision_mode
+        mode_text = "ON" if self.precision_mode else "OFF"
+        print(f"🎯 Precision mode: {mode_text}")
+        return self.precision_mode
+    
+    def handle_click_and_hold(self, hand_info: HandInfo, current_time: float):
+        """Handle click and hold operations for drag and drop"""
+        hand_type = hand_info.hand_type
+        hand_state = self.hand_states[hand_type]
+        is_pinching = hand_info.is_pinching
+        
+        # Check for click and hold
+        if is_pinching and hand_state["pinch_start_time"] > 0:
+            pinch_duration = current_time - hand_state["pinch_start_time"]
+            
+            if pinch_duration >= self.click_hold_threshold and not hand_state["is_holding"]:
+                # Start click and hold (drag operation)
+                hand_state["is_holding"] = True
+                self.is_dragging = True
+                self.drag_start_pos = hand_info.fingers["index"].tip_position
+                self.system.mouse_down()  # Start drag
+                print("🖱️  Click and hold started - drag mode active")
+                
+        elif not is_pinching and hand_state["is_holding"]:
+            # End click and hold (release drag)
+            hand_state["is_holding"] = False
+            self.is_dragging = False
+            self.drag_start_pos = None
+            self.system.mouse_up()  # End drag
+            print("🖱️  Click and hold released - drag ended")
+
     def _move_cursor_with_hand(self, hand_info: HandInfo, frame_width: int, frame_height: int):
-        """Move cursor based on index finger position"""
+        """Move cursor based on index finger position with sensitivity control"""
         # Use index finger tip for cursor position
         index_tip = hand_info.fingers["index"].tip_position
         
-        # Convert hand position to screen coordinates
-        # Direct mapping (no flipping needed since frame is already flipped)
-        screen_x = index_tip[0] / frame_width * self.screen_width
-        screen_y = index_tip[1] / frame_height * self.screen_height
+        # Apply sensitivity based on mode
+        active_sensitivity = self.precision_sensitivity if self.precision_mode else self.cursor_sensitivity
+        
+        # Convert hand position to screen coordinates with sensitivity
+        screen_x = index_tip[0] / frame_width * self.screen_width * active_sensitivity
+        screen_y = index_tip[1] / frame_height * self.screen_height * active_sensitivity
+        
+        # Center the movement if sensitivity is not 1.0
+        if active_sensitivity != 1.0:
+            center_x, center_y = self.screen_width / 2, self.screen_height / 2
+            screen_x = center_x + (screen_x - center_x)
+            screen_y = center_y + (screen_y - center_y)
         
         # Apply smoothing
         if self.last_cursor_pos is not None:
-            screen_x = self.last_cursor_pos[0] * self.cursor_smoothing + screen_x * (1 - self.cursor_smoothing)
-            screen_y = self.last_cursor_pos[1] * self.cursor_smoothing + screen_y * (1 - self.cursor_smoothing)
+            smoothing = 0.8 if self.precision_mode else self.cursor_smoothing
+            screen_x = self.last_cursor_pos[0] * smoothing + screen_x * (1 - smoothing)
+            screen_y = self.last_cursor_pos[1] * smoothing + screen_y * (1 - smoothing)
         
         # Constrain to screen bounds
         screen_x = max(0, min(self.screen_width - 1, screen_x))
         screen_y = max(0, min(self.screen_height - 1, screen_y))
         
-        # Move cursor
-        self.system.move_cursor(screen_x, screen_y)
+        # Move cursor (only if not in drag mode or apply drag movement)
+        if self.is_dragging:
+            # Continue drag movement
+            self.system.move_cursor_while_dragging(screen_x, screen_y)
+        else:
+            self.system.move_cursor(screen_x, screen_y)
+            
         self.last_cursor_pos = (screen_x, screen_y)
     
     def get_status(self) -> str:
