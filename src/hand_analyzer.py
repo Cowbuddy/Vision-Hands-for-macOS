@@ -5,7 +5,6 @@ import math
 import numpy as np
 from typing import Dict, List
 from .models import HandInfo, FingerState, HandLandmarks
-from .gesture_recognition import GestureRecognizer
 
 
 def vec(a, b):
@@ -81,7 +80,7 @@ class HandAnalyzer:
     
     def __init__(self):
         self.finger_names = ["thumb", "index", "middle", "ring", "pinky"]
-        self.gesture_recognizer = GestureRecognizer()
+        # No external gesture recognizer needed - using inline simple recognition
         
     def analyze_hand(self, hand_landmarks, handedness, frame_width, frame_height) -> HandInfo:
         """Analyze a single hand and return comprehensive information"""
@@ -139,8 +138,8 @@ class HandAnalyzer:
         )
         is_pinching = pinch_distance < 50  # Adjust threshold as needed
         
-        # Enhanced gesture recognition
-        gesture_name = self.gesture_recognizer.recognize_gesture(fingers, is_fist, is_pinching)
+        # Simple gesture recognition (inline)
+        gesture_name = self._simple_gesture_recognition(fingers, is_fist, is_pinching)
         
         return HandInfo(
             hand_type=hand_type,
@@ -154,6 +153,30 @@ class HandAnalyzer:
             pinch_distance=pinch_distance
         )
     
-    def detect_gesture_transition(self, hand_info: HandInfo):
-        """Detect gesture transitions for the current hand"""
-        return self.gesture_recognizer.detect_transition(hand_info.gesture_name)
+    def _simple_gesture_recognition(self, fingers: Dict[str, FingerState], is_fist: bool, is_pinching: bool) -> str:
+        """Simple gesture recognition for our dual-hand system"""
+        if is_pinching:
+            return "pinch"
+        
+        if is_fist:
+            return "fist"
+        
+        # Count extended fingers
+        extended = [name for name, finger in fingers.items() if finger.is_extended]
+        extended_count = len(extended)
+        extended_set = set(extended)
+        
+        if extended_count == 0:
+            return "fist"
+        elif extended_count == 1 and "index" in extended_set:
+            return "point"
+        elif extended_count == 2 and {"index", "middle"}.issubset(extended_set):
+            return "peace"
+        elif extended_count == 3:
+            return "three"
+        elif extended_count == 4:
+            return "four"
+        elif extended_count == 5:
+            return "open"
+        else:
+            return "unknown"
