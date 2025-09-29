@@ -20,11 +20,11 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
-.venv/
+# Virtual environments
 venv/
-ENV/
 env/
+ENV/
+.venv
 
 # IDE
 .vscode/
@@ -32,25 +32,50 @@ env/
 *.swp
 *.swo
 *~
+.DS_Store
+
+# Configuration
+config.json
+config.example.json
+
+# Model files (large)
+*.task
+*.tflite
+*.pb
+
+# Logs
+*.log
+logs/
+
+# Test files
+test_*.py
+tests/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Cache
+.cache/
+*.cache
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
 
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 
-# Temporary files
-*.tmp
-*.temp
-*.log
-
-# Testing
-.pytest_cache/
-.coverage
+# Coverage reports
 htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
 
-# Project specific
-*.task.backup
-test_*.py
-demo_*.py
-*_test.py
-cleanup_*.py
+# Environment variables
+.env
+.env.local

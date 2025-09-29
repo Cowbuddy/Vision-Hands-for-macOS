@@ -163,8 +163,13 @@ class OptimizedHandTracker:
             'drag_active': False,
             'right_click_ready': False,
             'scroll_active': False,
-            'last_scroll_time': 0
+            'last_scroll_time': 0,
+            'last_gesture': 'unknown'
         }
+        
+        # Scroll settings
+        self.scroll_cooldown = 0.5  # Seconds between scrolls
+        self.scroll_sensitivity = 3
         
         # Memory management
         self.gc_counter = 0
@@ -362,6 +367,8 @@ class OptimizedHandTracker:
         print("     • Index finger position = Move cursor (works at any angle)")
         print("     • Quick pinch = Click")
         print("     • Hold pinch (0.8s+) = Click-and-hold/drag")
+        print("     • 3 fingers = Scroll up")
+        print("     • 4 fingers = Scroll down")
         print("   KEYBOARD: ESC = Exit | SPACE = Toggle cursor | 1-9 = Sensitivity")
         
         try:
@@ -431,18 +438,34 @@ class OptimizedHandTracker:
     def _handle_right_hand_cursor(self, hand_info: HandInfo, frame_width: int, frame_height: int):
         """Enhanced right hand cursor control - works regardless of gesture"""
         is_pinching = hand_info.is_pinching
+        current_gesture = hand_info.gesture_name
+        current_time = time.time()
         
         # Debug output for right hand
         if self.frame_count % 30 == 0:  # Print every 30 frames to avoid spam
             pinch_distance = hand_info.pinch_distance if hasattr(hand_info, 'pinch_distance') else 'N/A'
-            print(f"👉 RIGHT HAND - Pinching: {is_pinching}, Pinch distance: {pinch_distance}")
+            print(f"👉 RIGHT HAND - Pinching: {is_pinching}, Gesture: {current_gesture}, Pinch distance: {pinch_distance}")
             print(f"   Pinch held state: {self.gesture_states['pinch_held']}")
+        
+        # Handle scrolling gestures (three/four fingers)
+        if current_gesture in ['three', 'three_fingers'] and not is_pinching:
+            if current_time - self.gesture_states['last_scroll_time'] > self.scroll_cooldown:
+                self.system_controller.scroll('up', self.scroll_sensitivity)
+                self.gesture_states['last_scroll_time'] = current_time
+                print("📜 Scroll UP")
+                return  # Don't move cursor while scrolling
+        
+        elif current_gesture in ['four', 'four_fingers'] and not is_pinching:
+            if current_time - self.gesture_states['last_scroll_time'] > self.scroll_cooldown:
+                self.system_controller.scroll('down', self.scroll_sensitivity)
+                self.gesture_states['last_scroll_time'] = current_time
+                print("📜 Scroll DOWN")
+                return  # Don't move cursor while scrolling
         
         # Always move cursor based on index finger position (regardless of gesture)
         self._move_cursor_optimized(hand_info, frame_width, frame_height)
         
         # Handle pinch for clicking and click-hold
-        current_time = time.time()
         
         if is_pinching and not self.gesture_states['pinch_held']:
             # Start pinch - record time
