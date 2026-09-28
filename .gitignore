@@ -47,10 +47,6 @@ config.example.json
 *.log
 logs/
 
-# Test files
-test_*.py
-tests/
-
 # Temporary files
 tmp/
 temp/

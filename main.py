@@ -6,6 +6,10 @@ Fixed flickering issues with proper memory management and MediaPipe optimization
 Features: Memory-efficient processing, frame pooling, and optimized MediaPipe initialization.
 """
 import os
+import argparse
+import contextlib
+import json
+import sys
 import cv2
 import time
 import numpy as np
@@ -33,11 +37,11 @@ from src.system_controller import SystemController
 try:
     import Quartz
     MACOS_NATIVE = True
-    print("✅ macOS native cursor APIs loaded")
+    print("✅ macOS native cursor APIs loaded", file=sys.stderr)
 except ImportError:
     import pyautogui
     MACOS_NATIVE = False
-    print("⚠️  Using pyautogui (install pyobjc for native speed)")
+    print("⚠️  Using pyautogui (install pyobjc for native speed)", file=sys.stderr)
 
 # Configure for maximum performance
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -130,13 +134,16 @@ class OptimizedEMASmoothing:
 class OptimizedHandTracker:
     """Ultra-optimized hand tracker with memory management"""
     
-    def __init__(self):
+    def __init__(self, events_only=False, event_stream=None):
+        self.events_only = events_only
+        self.event_stream = event_stream if event_stream is not None else sys.stdout
+        self.visible_hands = set()
         # Initialize MediaPipe once with optimized settings
         self.hand_landmarker = self._create_optimized_landmarker()
         self.hand_analyzer = HandAnalyzer()
         self.gesture_recognizer = StableGestureRecognizer(history_size=5)  # Smaller for memory
-        self.cursor_controller = MemoryOptimizedCursorController()
-        self.system_controller = SystemController()
+        self.cursor_controller = None if events_only else MemoryOptimizedCursorController()
+        self.system_controller = None if events_only else SystemController()
         
         # Pre-allocate arrays for frame processing
         self.rgb_frame = None
@@ -225,10 +232,9 @@ class OptimizedHandTracker:
         result = self.hand_landmarker.detect_for_video(mp_image, timestamp_ms)
         
         # Process hands for cursor control
-        if result.hand_landmarks and result.handedness:
-            self._process_hands_optimized(
-                result.hand_landmarks, result.handedness, frame_width, frame_height
-            )
+        self._process_hands_optimized(
+            result.hand_landmarks or [], result.handedness or [], frame_width, frame_height
+        )
         
         # Draw minimal UI
         annotated_frame = self._draw_minimal_ui(frame, result)
@@ -258,6 +264,15 @@ class OptimizedHandTracker:
             elif hand_info.hand_type == "Right":
                 right_hand = hand_info
         
+        visible = {hand.hand_type for hand in (left_hand, right_hand) if hand}
+        for hand in sorted(self.visible_hands - visible):
+            self._emit_event("tracking.lost", hand)
+        self.visible_hands = visible
+        if not left_hand:
+            self.gesture_states['left_pinch_held'] = False
+        if not right_hand or not self.cursor_enabled:
+            self._cancel_pinch()
+
         # Handle left hand for tracking toggle
         if left_hand:
             self._handle_left_hand_controls(left_hand)
@@ -272,6 +287,8 @@ class OptimizedHandTracker:
     
     def _move_cursor_optimized(self, hand_info: HandInfo, frame_width: int, frame_height: int):
         """Optimized cursor movement - works regardless of gesture/angle"""
+        if self.events_only:
+            return
         # Use index finger tip position regardless of gesture detection
         # This makes it work even when pointing directly at camera or at weird angles
         index_tip = hand_info.fingers["index"].tip_position
@@ -396,8 +413,12 @@ class OptimizedHandTracker:
                     self.adjust_sensitivity(sensitivity_level)
                 elif key == ord(' '):  # Space to toggle cursor
                     self.cursor_enabled = not self.cursor_enabled
+                    if not self.cursor_enabled:
+                        self._cancel_pinch()
                     print(f"🎯 Cursor {'enabled' if self.cursor_enabled else 'disabled'}")
                 elif key == ord('r'):  # Reset
+                    if not self._cancel_pinch():
+                        continue  # Preserve held input until release succeeds.
                     self.ema_smoother = OptimizedEMASmoothing(alpha=self.sensitivity)
                     self.gesture_states = {k: False if k != 'last_scroll_time' else 0 for k, v in self.gesture_states.items()}
                     print("🔄 System reset!")
@@ -406,10 +427,28 @@ class OptimizedHandTracker:
             print("\n⏹️ Stopping optimized hand tracking...")
         
         finally:
+            self._cancel_pinch()
             cap.release()
             cv2.destroyAllWindows()
             print("✅ Optimized cleanup complete!")
 
+
+    def _emit_event(self, event_type, hand):
+        if self.events_only:
+            print(json.dumps({"version": 1, "source": "visionhands",
+                              "type": event_type, "hand": hand,
+                              "timestamp": time.time()}),
+                  file=self.event_stream, flush=True)
+
+    def _cancel_pinch(self):
+        """Release held input when tracking stops; never synthesize a click."""
+        if self.gesture_states.get('drag_active', False):
+            if not self.events_only and not self.system_controller.mouse_up():
+                return False  # Keep state so the next frame can retry release.
+        self.gesture_states['drag_active'] = False
+        self.gesture_states['pinch_held'] = False
+        self.gesture_states['pinch_start_time'] = 0
+        return True
 
     def _handle_left_hand_controls(self, hand_info: HandInfo):
         """Handle left hand for tracking toggle and other controls"""
@@ -426,11 +465,15 @@ class OptimizedHandTracker:
         if is_pinching and not self.gesture_states.get('left_pinch_held', False):
             # Toggle tracking
             self.cursor_enabled = not self.cursor_enabled
+            if not self.cursor_enabled:
+                self._cancel_pinch()
+            self._emit_event("pinch.start", "Left")
             self.gesture_states['left_pinch_held'] = True
             status = "ENABLED" if self.cursor_enabled else "DISABLED"
             print(f"🔄 LEFT HAND PINCH: Cursor tracking {status}")
             
         elif not is_pinching and self.gesture_states.get('left_pinch_held', False):
+            self._emit_event("pinch.end", "Left")
             # Reset pinch state when released
             self.gesture_states['left_pinch_held'] = False
             print("🤚 Left hand pinch released")
@@ -448,16 +491,18 @@ class OptimizedHandTracker:
             print(f"   Pinch held state: {self.gesture_states['pinch_held']}")
         
         # Handle scrolling gestures (three/four fingers)
-        if current_gesture in ['three', 'three_fingers'] and not is_pinching:
+        if current_gesture in ['three', 'three_fingers'] and not is_pinching and not self.gesture_states['pinch_held']:
             if current_time - self.gesture_states['last_scroll_time'] > self.scroll_cooldown:
-                self.system_controller.scroll('up', self.scroll_sensitivity)
+                if not self.events_only:
+                    self.system_controller.scroll('up', self.scroll_sensitivity)
                 self.gesture_states['last_scroll_time'] = current_time
                 print("📜 Scroll UP")
                 return  # Don't move cursor while scrolling
         
-        elif current_gesture in ['four', 'four_fingers'] and not is_pinching:
+        elif current_gesture in ['four', 'four_fingers'] and not is_pinching and not self.gesture_states['pinch_held']:
             if current_time - self.gesture_states['last_scroll_time'] > self.scroll_cooldown:
-                self.system_controller.scroll('down', self.scroll_sensitivity)
+                if not self.events_only:
+                    self.system_controller.scroll('down', self.scroll_sensitivity)
                 self.gesture_states['last_scroll_time'] = current_time
                 print("📜 Scroll DOWN")
                 return  # Don't move cursor while scrolling
@@ -468,6 +513,7 @@ class OptimizedHandTracker:
         # Handle pinch for clicking and click-hold
         
         if is_pinching and not self.gesture_states['pinch_held']:
+            self._emit_event("pinch.start", "Right")
             # Start pinch - record time
             self.gesture_states['pinch_start_time'] = current_time
             self.gesture_states['pinch_held'] = True
@@ -479,25 +525,26 @@ class OptimizedHandTracker:
             
             if pinch_duration > 0.8 and not self.gesture_states.get('drag_active', False):
                 # Start drag after 800ms of pinch hold
-                self.gesture_states['drag_active'] = True
+                self.gesture_states['drag_active'] = (
+                    not self.events_only and self.system_controller.mouse_down()
+                )
                 print("🖱️ RIGHT HAND: Click-and-hold started (drag mode)")
                 # Perform mouse down for drag
-                import pyautogui
-                pyautogui.mouseDown()
                 
         elif not is_pinching and self.gesture_states['pinch_held']:
+            self._emit_event("pinch.end", "Right")
             # Pinch released
             pinch_duration = current_time - self.gesture_states.get('pinch_start_time', current_time)
             
             if self.gesture_states.get('drag_active', False):
-                # End drag
-                import pyautogui
-                pyautogui.mouseUp()
-                self.gesture_states['drag_active'] = False
+                # End drag; retain pinch state if the OS release failed.
+                if not self._cancel_pinch():
+                    return
                 print("🖱️ RIGHT HAND: Click-and-hold ended (drag released)")
             elif pinch_duration < 0.8:
                 # Quick pinch - perform click
-                self.system_controller.left_click()
+                if not self.events_only:
+                    self.system_controller.left_click()
                 print("🖱️ RIGHT HAND: Quick click performed")
             
             # Reset pinch states
@@ -505,7 +552,7 @@ class OptimizedHandTracker:
             self.gesture_states['pinch_start_time'] = 0
 
 
-def main():
+def main(events_only=False, event_stream=None):
     """Main entry point for optimized hand tracking"""
     print("🚀 OPTIMIZED Hand Tracking System")
     print("=" * 50)
@@ -520,9 +567,18 @@ def main():
         return
     
     # Create and run optimized tracker
-    tracker = OptimizedHandTracker()
+    tracker = OptimizedHandTracker(events_only=events_only, event_stream=event_stream)
     tracker.run_optimized()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Hand tracking and optional Jevis event output")
+    parser.add_argument("--events-only", action="store_true",
+                        help="Emit JSONL gesture events without controlling the OS")
+    args = parser.parse_args()
+    if args.events_only:
+        event_stream = sys.stdout
+        with contextlib.redirect_stdout(sys.stderr):
+            main(events_only=True, event_stream=event_stream)
+    else:
+        main()
