@@ -330,3 +330,31 @@ This project is open source under the MIT License. Feel free to use, modify, and
 **Made with ❤️ for the macOS community**
 
 *Star ⭐ this repo if you find it useful!*
+
+### Jevis gesture event boundary
+
+`python main.py --events-only` runs hand detection but emits JSONL to stdout instead
+of moving the pointer, clicking, dragging, or scrolling. Diagnostic messages go to
+stderr. This mode still needs the existing model, camera, and Python dependencies;
+it does not connect to Jevis or execute model-generated actions.
+
+```json
+{"version":1,"source":"visionhands","type":"pinch.start","hand":"Right","timestamp":1750000000.25}
+```
+
+`type` is `pinch.start`, `pinch.end`, or `tracking.lost`; `hand` is `Left` or
+`Right`; `timestamp` is Unix time in seconds. Pinch events occur on transitions,
+not every frame. Loss is emitted once per previously visible hand. A consumer
+must cancel pending pinch intent on loss (there may be no `pinch.end`). The
+existing left-hand tracking toggle still gates right-hand pinch recognition.
+These events describe observed gestures, not permission to perform an action.
+
+Normal mode also releases an active drag when a hand disappears, tracking is
+disabled, the tracker is reset, or the capture loop exits. Release failures retain
+state for a retry while the tracker continues running.
+
+Camera-free regression checks (no OS input or third-party dependencies):
+
+```bash
+python3 -m unittest discover -s tests -v
+```
